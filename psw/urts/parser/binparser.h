@@ -80,6 +80,11 @@ public:
     // Get the TLS section
     virtual const Section* get_tls_section() const = 0;
 
+    // Get the WASM section
+    virtual void set_ignore_wasm_sec_sign(bool sign) = 0;
+    virtual const Section* get_wasm_section() const = 0;
+    virtual const Section* get_wasm_section_ex() const = 0;
+
     virtual uint64_t get_symbol_rva(const char* name) const = 0;
 
     virtual bool get_reloc_bitmap(std::vector<uint8_t> &bitmap) = 0;

@@ -110,7 +110,7 @@ bool parse_key_file(int mode, const char *key_path, EVP_PKEY **pkey, int *pkey_t
     EVP_PKEY *key = NULL; 
     int key_type = UNIDENTIFIABLE_KEY;
 
-    if(mode == SIGN)
+    if(mode == SIGN || mode == SIGNWASM || mode == GEN_WASM_VM_MR)
     {
         key = PEM_read_bio_PrivateKey(rsa_bio, NULL, NULL, NULL);
         BIO_free(rsa_bio);

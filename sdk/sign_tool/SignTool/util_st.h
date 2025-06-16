@@ -45,6 +45,8 @@
     "   catsig                  Generate the signed enclave with the input signature file, the\n"\
     "                           public key and the enclave signing material\n"\
     "   dump                    Dump metadata information for a signed enclave file\n"\
+    "   signwasm                Sign the enclave and load the wasm file\n"\
+    "   gen_rt_mr               Generate the pre-measurement ignoring the wasm section\n"\
     "Options:\n"\
     "   -enclave                Specify the enclave file to be signed or already signed\n"\
     "                           It is a required option for the four commands\n"\
@@ -60,6 +62,10 @@
     "   -dumpfile               Specify a file to dump metadata information (text format)\n" \
     "                           It is a required option for \"dump\"\n" \
     "   -cssfile                Specify a file to dump the enclave SIGSTRUCT information (binary format)\n" \
+    "   -port_pld               Specify a payload file to be loaded into the wasm section\n" \
+    "   -port_id                Specify a file storing the portable identity of payload to be loaded into the wasm section\n" \
+    "   -rt_comm                Specify a file storing the common part of runtime to be loaded\n" \
+    "   -rt_mr_out              Specify a file to store the pre-measurement of the wasm-runtime-enclave\n" \
     "   -ignore-rel-error       By default, sgx_sign provides an error for enclaves with\n" \
     "                           text relocations. You can ignore the error and continue signing\n" \
     "                           by providing this option. But it is recommended you eliminate the\n" \
@@ -181,7 +187,9 @@ typedef enum _command_mode_t
     SIGN = 0,
     GENDATA,
     CATSIG,
-    DUMP
+    DUMP,
+    SIGNWASM,
+    GEN_WASM_VM_MR
 } command_mode_t;
 
 

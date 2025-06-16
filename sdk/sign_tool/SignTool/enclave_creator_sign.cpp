@@ -67,6 +67,7 @@ EnclaveCreatorST::EnclaveCreatorST()
     m_ctx = NULL;
     m_eid = EID;
     m_quota = 0;
+    memset(&m_wasm_rt_mr, 0, sizeof(m_wasm_rt_mr));
 }
 
 EnclaveCreatorST::~EnclaveCreatorST()
@@ -124,6 +125,7 @@ int EnclaveCreatorST::create_enclave(secs_t *secs, sgx_enclave_id_t *enclave_id,
         se_trace(SE_TRACE_DEBUG, "ERROR - EVP_DigestUpdate: %s.\n", ERR_error_string(ERR_get_error(), NULL));
         return SGX_ERROR_UNEXPECTED;
     }
+    m_wasm_rt_mr.size += DATA_BLOCK_SIZE;
 
     *enclave_id = m_eid;
     *start_addr = secs->base;
@@ -180,6 +182,7 @@ int EnclaveCreatorST::add_enclave_page(sgx_enclave_id_t enclave_id, void *src, u
         se_trace(SE_TRACE_DEBUG, "ERROR - EVP_digestUpdate: %s.\n", ERR_error_string(ERR_get_error(), NULL));
         return SGX_ERROR_UNEXPECTED;
     }
+    m_wasm_rt_mr.size += DATA_BLOCK_SIZE;
 
     /* If the page need to eextend, do eextend. */
     if((attr & ADD_EXTEND_PAGE) == ADD_EXTEND_PAGE)
@@ -200,6 +203,7 @@ int EnclaveCreatorST::add_enclave_page(sgx_enclave_id_t enclave_id, void *src, u
                 se_trace(SE_TRACE_DEBUG, "ERROR - EVP_digestUpdate: %s.\n", ERR_error_string(ERR_get_error(), NULL));
                 return SGX_ERROR_UNEXPECTED;
             }
+            m_wasm_rt_mr.size += DATA_BLOCK_SIZE;
 
             for(int j = 0; j < EEXTEND_TIME; j++)
             {
@@ -209,6 +213,7 @@ int EnclaveCreatorST::add_enclave_page(sgx_enclave_id_t enclave_id, void *src, u
                     se_trace(SE_TRACE_DEBUG, "ERROR - EVP_digestUpdate: %s.\n", ERR_error_string(ERR_get_error(), NULL));
                     return SGX_ERROR_UNEXPECTED;
                 }
+                m_wasm_rt_mr.size += DATA_BLOCK_SIZE;
                 pdata += DATA_BLOCK_SIZE;
                 page_offset += DATA_BLOCK_SIZE;
             }
@@ -219,10 +224,19 @@ int EnclaveCreatorST::add_enclave_page(sgx_enclave_id_t enclave_id, void *src, u
     return SGX_SUCCESS;
 }
 
+#include <stdio.h>
+
 int EnclaveCreatorST::init_enclave(sgx_enclave_id_t enclave_id, enclave_css_t *enclave_css, SGXLaunchToken *lc, le_prd_css_file_t *prd_css_file)
 {
     assert(m_ctx != NULL);
     UNUSED(enclave_id), UNUSED(enclave_css), UNUSED(lc), UNUSED(prd_css_file);
+    if (m_ctx->md_data != NULL)
+    {
+        memcpy_s(m_wasm_rt_mr.digest, SGX_HASH_SIZE, reinterpret_cast<uint8_t*>(m_ctx->md_data), SGX_HASH_SIZE);
+    }
+    else{
+        memcpy_s(m_wasm_rt_mr.digest, SGX_HASH_SIZE, reinterpret_cast<uint8_t*>(m_ctx->algctx), SGX_HASH_SIZE);
+    }
 
     uint8_t temp_hash[SGX_HASH_SIZE];
     memset(temp_hash, 0, SGX_HASH_SIZE);
@@ -290,7 +304,7 @@ bool EnclaveCreatorST::is_driver_compatible()
 }
 
 
-int EnclaveCreatorST::get_enclave_info(uint8_t *hash, int size, uint64_t *quota)
+int EnclaveCreatorST::get_enclave_info(uint8_t *hash, int size, uint64_t *quota, sgx_hash_state_t *wasm_vm_mr)
 {
     if(hash == NULL || size != SGX_HASH_SIZE || m_hash_valid_flag == false)
     {
@@ -302,6 +316,10 @@ int EnclaveCreatorST::get_enclave_info(uint8_t *hash, int size, uint64_t *quota)
         memcpy_s(hash, size, m_enclave_hash, SGX_HASH_SIZE);
     }
     *quota = m_quota;
+    if (wasm_vm_mr != NULL)
+    {
+        memcpy_s(wasm_vm_mr, sizeof(m_wasm_rt_mr), &m_wasm_rt_mr, sizeof(m_wasm_rt_mr));
+    }
     return SGX_SUCCESS;
 }
 

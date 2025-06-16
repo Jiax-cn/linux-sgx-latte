@@ -19,6 +19,7 @@ DeliveryName	InstallName	FileCheckSum	FileFeature	FileOwner
 <deliverydir>/common/inc/sgx_report2.h	<installdir>/package/include/./sgx_report2.h	0	main	STP
 <deliverydir>/common/inc/sgx_spinlock.h	<installdir>/package/include/./sgx_spinlock.h	0	main	STP
 <deliverydir>/common/inc/sgx_tcrypto.h	<installdir>/package/include/./sgx_tcrypto.h	0	main	STP
+<deliverydir>/common/inc/sgx_wasm.h	<installdir>/package/include/./sgx_wasm.h	0	main	STP
 <deliverydir>/common/inc/sgx_thread.h	<installdir>/package/include/./sgx_thread.h	0	main	STP
 <deliverydir>/common/inc/sgx_tkey_exchange.edl	<installdir>/package/include/./sgx_tkey_exchange.edl	0	main	STP
 <deliverydir>/common/inc/sgx_tkey_exchange.h	<installdir>/package/include/./sgx_tkey_exchange.h	0	main	STP

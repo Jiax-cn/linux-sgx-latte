@@ -54,7 +54,8 @@ INC +=  -I$(COMMON_DIR)/inc                         \
         -I$(LINUX_PSW_DIR)/urts/linux               \
         -I$(LINUX_EXTERNAL_DIR)/tinyxml2            \
         -I$(LINUX_PSW_DIR)/urts/parser              \
-        -I$(PREBUILT_OPENSSL_DIR)/inc
+        -I$(PREBUILT_OPENSSL_DIR)/inc               \
+	-I$(LATTE_DIR)/src
 
 DIR1 := $(LINUX_EXTERNAL_DIR)/tinyxml2/
 DIR2 := $(COMMON_DIR)/src/

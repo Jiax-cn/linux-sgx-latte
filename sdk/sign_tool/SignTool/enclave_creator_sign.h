@@ -37,8 +37,29 @@
 
 #include "enclave_creator.h"
 #include "sgx_eid.h"
+#include "sgx_wasm.h"
 
 #define SIZE_NAMED_VALUE 8
+
+struct evp_md_ctx_st {
+    const EVP_MD *reqdigest;    /* The original requested digest */
+    const EVP_MD *digest;
+    ENGINE *engine;             /* functional reference if 'digest' is
+                                 * ENGINE-provided */
+    unsigned long flags;
+    void *md_data;
+    /* Public key context for sign/verify */
+    EVP_PKEY_CTX *pctx;
+    /* Update function: usually copied from EVP_MD */
+    int (*update) (EVP_MD_CTX *ctx, const void *data, size_t count);
+
+    /*
+     * Opaque ctx returned from a providers digest algorithm implementation
+     * OSSL_FUNC_digest_newctx()
+     */
+    void *algctx;
+    EVP_MD *fetched_digest;
+} /* EVP_MD_CTX */ ;
 
 class EnclaveCreatorST : public EnclaveCreator
 {
@@ -55,13 +76,14 @@ public:
     bool use_se_hw() const;
     bool is_EDMM_supported(sgx_enclave_id_t enclave_id);
     bool is_driver_compatible();
-    int get_enclave_info(uint8_t *hash, int size, uint64_t *quota);
+    int get_enclave_info(uint8_t *hash, int size, uint64_t *quota, sgx_hash_state_t *wasm_vm_mr);
 private:
     uint8_t m_enclave_hash[SGX_HASH_SIZE];
     EVP_MD_CTX  *m_ctx;
     bool m_hash_valid_flag;
     sgx_enclave_id_t m_eid;
     uint64_t m_quota;
+    sgx_hash_state_t m_wasm_rt_mr;
 };
 
 #endif

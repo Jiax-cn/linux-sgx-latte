@@ -62,6 +62,11 @@ public:
     // It is in fact a `segment' in ELF's view.
     const std::vector<Section *>& get_sections() const;
     const Section* get_tls_section() const;
+
+    void set_ignore_wasm_sec_sign(bool sign);
+    const Section* get_wasm_section() const;
+    const Section* get_wasm_section_ex() const;
+
     uint64_t get_symbol_rva(const char* name) const;
 
     bool get_reloc_bitmap(std::vector<uint8_t> &bitmap);
@@ -101,6 +106,8 @@ private:
     bin_fmt_t              m_bin_fmt;
     std::vector<Section *> m_sections;
     const Section*         m_tls_section;
+    bool                   m_ignore_wasm_sec_sign;
+    Section*               m_wasm_section;
     uint64_t               m_metadata_offset;
     uint64_t               m_metadata_block_size;/*multiple metadata block size*/
 

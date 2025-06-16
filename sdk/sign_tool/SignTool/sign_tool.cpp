@@ -64,11 +64,13 @@
 #include "parserfactory.h"
 #include "elf_helper.h"
 #include "crypto_wrapper.h"
+#include "sgx_wasm.h"
 
 #include <unistd.h>
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 
 #include <string>
@@ -93,7 +95,11 @@ typedef enum _file_path_t
     SIG,
     UNSIGNED,
     DUMPFILE,
-    CSSFILE
+    CSSFILE,
+    PORT_PLD,
+    PORT_ID,
+    RT_COMM,
+    RT_MR_OUT
 } file_path_t;
 
 
@@ -139,8 +145,13 @@ static bool get_enclave_info(BinParser *parser, bin_fmt_t *bf, uint64_t * meta_o
 // measure_enclave():
 //    1. Get the enclave hash by loading enclave
 //    2. Get the enclave info - metadata offset and enclave file format
-static bool measure_enclave(uint8_t *hash, const char *dllpath, const xml_parameter_t *parameter, uint32_t option_flag_bits, metadata_t *metadata, uint64_t *meta_offset, uint8_t *meta_versions)
-{
+static bool measure_enclave(
+    uint8_t *hash, const char *dllpath, const xml_parameter_t *parameter, uint32_t option_flag_bits, 
+    metadata_t *metadata, uint64_t *meta_offset, uint8_t *meta_versions, 
+    uint64_t &wasm_rva, uint64_t &wasm_offset,
+    sgx_hash_state_t *wasm_vm_mr = NULL,
+    bool ignore_wasm_sec_sign = false
+) {
     assert(hash && dllpath && metadata && meta_offset && meta_versions);
     bool res = false;
     off_t file_size = 0;
@@ -172,6 +183,16 @@ static bool measure_enclave(uint8_t *hash, const char *dllpath, const xml_parame
         close_handle(fh);
         return false;
     }
+
+    const Section* wasm_section = parser->get_wasm_section();
+    if (wasm_section != NULL)
+    {
+        wasm_rva = wasm_section->get_rva();
+        wasm_offset = wasm_section->get_offset();
+    }
+
+    parser->set_ignore_wasm_sec_sign(ignore_wasm_sec_sign);
+
     if(parser->has_init_section() && IGNORE_INIT_SEC_ERROR(option_flag_bits) == false)
     {
         se_trace(SE_TRACE_ERROR, INIT_SEC_ERROR);
@@ -231,7 +252,7 @@ static bool measure_enclave(uint8_t *hash, const char *dllpath, const xml_parame
         res = false;
         break;
     case SGX_SUCCESS:
-        ret = static_cast<EnclaveCreatorST*>(get_enclave_creator())->get_enclave_info(hash, SGX_HASH_SIZE, &quota);
+        ret = static_cast<EnclaveCreatorST*>(get_enclave_creator())->get_enclave_info(hash, SGX_HASH_SIZE, &quota, wasm_vm_mr);
         if(ret != SGX_SUCCESS)
         {
             res = false;
@@ -618,7 +639,7 @@ static bool cmdline_parse(unsigned int argc, char *argv[], int *mode, const char
         const char *name;          //options
         char *value;               //keep the path
         int flag;                  //indicate this parameter is required(0), optional(1) or invalid(2)
-    }param_struct_t;               //keep the parameter pairs
+    }param_struct_t;               //keep the parameter pairsportable_pld
 
     param_struct_t params_sign[] = {
         {"-enclave", NULL, PAR_REQUIRED},
@@ -628,7 +649,11 @@ static bool cmdline_parse(unsigned int argc, char *argv[], int *mode, const char
         {"-sig", NULL, PAR_INVALID},
         {"-unsigned", NULL, PAR_INVALID},
         {"-dumpfile", NULL, PAR_OPTIONAL},
-        {"-cssfile", NULL, PAR_OPTIONAL}};
+        {"-cssfile", NULL, PAR_OPTIONAL},
+        {"-port_pld", NULL, PAR_INVALID},
+        {"-port_id", NULL, PAR_INVALID},
+        {"-rt_comm", NULL, PAR_INVALID}, 
+        {"-rt_mr_out", NULL, PAR_INVALID}};
     param_struct_t params_gendata[] = {
         {"-enclave", NULL, PAR_REQUIRED},
         {"-config", NULL, PAR_OPTIONAL},
@@ -637,7 +662,11 @@ static bool cmdline_parse(unsigned int argc, char *argv[], int *mode, const char
         {"-sig", NULL, PAR_INVALID},
         {"-unsigned", NULL, PAR_INVALID},
         {"-dumpfile", NULL, PAR_INVALID},
-        {"-cssfile", NULL, PAR_INVALID}};
+        {"-cssfile", NULL, PAR_INVALID},
+        {"-port_pld", NULL, PAR_INVALID},
+        {"-port_id", NULL, PAR_INVALID},
+        {"-rt_comm", NULL, PAR_INVALID}, 
+        {"-rt_mr_out", NULL, PAR_INVALID}};
     param_struct_t params_catsig[] = {
         {"-enclave", NULL, PAR_REQUIRED},
         {"-config", NULL, PAR_OPTIONAL},
@@ -646,7 +675,11 @@ static bool cmdline_parse(unsigned int argc, char *argv[], int *mode, const char
         {"-sig", NULL, PAR_REQUIRED},
         {"-unsigned", NULL, PAR_REQUIRED},
         {"-dumpfile", NULL, PAR_OPTIONAL},
-        {"-cssfile", NULL, PAR_OPTIONAL}};
+        {"-cssfile", NULL, PAR_OPTIONAL},
+        {"-port_pld", NULL, PAR_INVALID},
+        {"-port_id", NULL, PAR_INVALID},
+        {"-rt_comm", NULL, PAR_INVALID}, 
+        {"-rt_mr_out", NULL, PAR_INVALID}};
     param_struct_t params_dump[] = {
         {"-enclave", NULL, PAR_REQUIRED},
         {"-config", NULL, PAR_INVALID},
@@ -655,11 +688,41 @@ static bool cmdline_parse(unsigned int argc, char *argv[], int *mode, const char
         {"-sig", NULL, PAR_INVALID},
         {"-unsigned", NULL, PAR_INVALID},
         {"-dumpfile", NULL, PAR_REQUIRED},
-        {"-cssfile", NULL, PAR_OPTIONAL}};
+        {"-cssfile", NULL, PAR_OPTIONAL},
+        {"-port_pld", NULL, PAR_INVALID},
+        {"-port_id", NULL, PAR_INVALID},
+        {"-rt_comm", NULL, PAR_INVALID}, 
+        {"-rt_mr_out", NULL, PAR_INVALID}};
+    param_struct_t params_signwasm[] = {
+        {"-enclave", NULL, PAR_REQUIRED},
+        {"-config", NULL, PAR_OPTIONAL},
+        {"-key", NULL, PAR_REQUIRED},
+        {"-out", NULL, PAR_REQUIRED},
+        {"-sig", NULL, PAR_INVALID},
+        {"-unsigned", NULL, PAR_INVALID},
+        {"-dumpfile", NULL, PAR_OPTIONAL},
+        {"-cssfile", NULL, PAR_OPTIONAL},
+        {"-port_pld", NULL, PAR_OPTIONAL},
+        {"-port_id", NULL, PAR_OPTIONAL},
+        {"-rt_comm", NULL, PAR_REQUIRED}, 
+        {"-rt_mr_out", NULL, PAR_INVALID}};
+    param_struct_t params_gen_rt_mr[] = {
+        {"-enclave", NULL, PAR_REQUIRED},
+        {"-config", NULL, PAR_OPTIONAL},
+        {"-key", NULL, PAR_REQUIRED},
+        {"-out", NULL, PAR_REQUIRED},
+        {"-sig", NULL, PAR_INVALID},
+        {"-unsigned", NULL, PAR_INVALID},
+        {"-dumpfile", NULL, PAR_OPTIONAL},
+        {"-cssfile", NULL, PAR_OPTIONAL},
+        {"-port_pld", NULL, PAR_INVALID},
+        {"-port_id", NULL, PAR_INVALID},
+        {"-rt_comm", NULL, PAR_INVALID}, 
+        {"-rt_mr_out", NULL, PAR_REQUIRED}};
 
 
-    const char *mode_m[] ={"sign", "gendata","catsig", "dump"};
-    param_struct_t *params[] = {params_sign, params_gendata, params_catsig, params_dump};
+    const char *mode_m[] ={"sign", "gendata","catsig", "dump", "signwasm", "gen_rt_mr"};
+    param_struct_t *params[] = {params_sign, params_gendata, params_catsig, params_dump, params_signwasm, params_gen_rt_mr};
     unsigned int tempidx=0;
     for(; tempidx<sizeof(mode_m)/sizeof(mode_m[0]); tempidx++)
     {
@@ -806,6 +869,8 @@ static bool generate_output(int mode, int ktype, const uint8_t *enclave_hash, co
     switch(mode)
     {
     case SIGN:
+    case SIGNWASM:
+    case GEN_WASM_VM_MR:
         {
             if(ktype != PRIVATE_KEY || !pkey)
             {
@@ -1377,7 +1442,7 @@ int main(int argc, char* argv[])
                                    {"AMX",                  FEATURE_LOADER_SELECTS,                     FEATURE_MUST_BE_DISABLED,              FEATURE_MUST_BE_DISABLED,                   0},
                                    {"UserRegionSize",       ENCLAVE_MAX_SIZE_64/2, 0,              USER_REGION_SIZE,    0},
                                    {"EnableAEXNotify",      1,                     0,              0,                   0}};
-    const char *path[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+    const char *path[12] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
     uint8_t enclave_hash[SGX_HASH_SIZE] = {0};
     uint8_t metadata_raw[METADATA_SIZE];
     metadata_t *metadata = (metadata_t*)metadata_raw;
@@ -1385,6 +1450,7 @@ int main(int argc, char* argv[])
     int key_type = UNIDENTIFIABLE_KEY; //indicate the type of the input key file
     size_t parameter_count = sizeof(parameter)/sizeof(parameter[0]);
     uint64_t meta_offset = 0;
+    uint64_t wasm_rva = 0, wasm_offset = 0;
     uint32_t option_flag_bits = 0;
      EVP_PKEY *pkey = NULL;
     memset(&metadata_raw, 0, sizeof(metadata_raw));
@@ -1428,17 +1494,143 @@ int main(int argc, char* argv[])
     {
         goto clear_return;
     }
+    if (mode == GEN_WASM_VM_MR)
+    {
+        sgx_hash_state_t rt_mr;
+        if (measure_enclave(
+                enclave_hash, path[DLL], parameter, option_flag_bits, 
+                metadata, &meta_offset, &meta_versions,
+                wasm_rva, wasm_offset,  
+                &rt_mr, true
+            ) == false
+        ) {
+            se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+            goto clear_return;
+        }
+
+        rt_mr.offset = wasm_rva;
+        printf("wasm section offset: %lu\n", wasm_rva);
+        for (uint64_t i = 0; i < sizeof(rt_mr); i++) 
+        {
+            printf("0x%02x, ", reinterpret_cast<uint8_t*>(&rt_mr)[i]);
+            if (i % 16 == 15)
+                printf("\n");
+        }
+        printf("\n");
+        printf("Writing to file %s .\n", path[RT_MR_OUT]);
+        if(write_data_to_file(path[RT_MR_OUT], std::ios::binary | std::ios::out | std::ios::app, reinterpret_cast<uint8_t*>(&rt_mr), sizeof(sgx_hash_state_t), 0) == false)
+        {
+            se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+            goto clear_return;
+        }
+        se_trace(SE_TRACE_ERROR, SUCCESS_EXIT);
+        res = 0;
+        goto clear_return;
+    }
+
     if(copy_file(path[DLL], path[OUTPUT]) == false)
     {
         se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
         goto clear_return;
     }
 
-    if(measure_enclave(enclave_hash, path[OUTPUT], parameter, option_flag_bits, metadata, &meta_offset, &meta_versions) == false)
+    if (mode == SIGNWASM) {
+        uint8_t *buf = NULL;
+        uint32_t buf_size = 0;
+
+        if (measure_enclave(enclave_hash, path[OUTPUT], parameter, option_flag_bits, metadata, &meta_offset, &meta_versions, wasm_rva, wasm_offset, NULL, true) == false) {
+            se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+            goto clear_return;
+        }
+
+        if (path[PORT_PLD] != NULL) {
+            buf_size = (uint32_t)get_file_size(path[PORT_PLD])+(uint32_t)sizeof(uint32_t);
+            if (buf_size > WASM_PLD_SEC_SIZE) {
+                se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+                goto clear_return;
+            }
+            buf = (uint8_t *)malloc(buf_size);
+            if (buf == NULL) {
+                se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+                goto clear_return;
+            }
+            memset(buf, 0, buf_size);
+            if (read_file_to_buf(path[PORT_PLD], buf, buf_size-(uint32_t)sizeof(uint32_t)) == false) {
+                se_trace(SE_TRACE_ERROR, READ_FILE_ERROR, path[UNSIGNED]);
+                delete []buf;
+                goto clear_return;   
+            }
+            *(uint32_t *)(buf+buf_size-(uint32_t)sizeof(uint32_t)) = buf_size-(uint32_t)sizeof(uint32_t);
+            if (write_data_to_file(path[OUTPUT], std::ios::in | std::ios::binary | std::ios::out, reinterpret_cast<uint8_t*>(buf), buf_size, wasm_offset+WASM_PLD_SEC_SIZE-buf_size) == false) {
+                se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+                delete []buf;
+                goto clear_return;
+            }
+            delete []buf;
+        }
+        else if (path[PORT_ID] != NULL) {
+            buf_size = (uint32_t)get_file_size(path[PORT_ID]);
+            if (buf_size > WASM_PLD_SEC_SIZE) {
+                se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+                goto clear_return;
+            }
+            buf = (uint8_t *)malloc(buf_size);
+            if (buf == NULL) {
+                se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+                goto clear_return;
+            }
+            memset(buf, 0, buf_size);
+            if (read_file_to_buf(path[PORT_ID], buf, buf_size) == false) {
+                se_trace(SE_TRACE_ERROR, READ_FILE_ERROR, path[UNSIGNED]);
+                delete []buf;
+                goto clear_return;   
+            }
+            if (write_data_to_file(path[OUTPUT], std::ios::in | std::ios::binary | std::ios::out, reinterpret_cast<uint8_t*>(buf), buf_size, wasm_offset) == false) {
+                se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+                delete []buf;
+                goto clear_return;
+            }
+            delete []buf;
+        }
+        else {
+            se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+            goto clear_return;
+        }
+
+        buf_size = (uint32_t)get_file_size(path[RT_COMM]);
+        if (buf_size > WASM_COMMON_SEC_SIZE) {
+            se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+            goto clear_return;
+        }
+        buf = (uint8_t *)malloc(buf_size);
+        if (buf == NULL) {
+            se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+            goto clear_return;
+        }
+        memset(buf, 0, buf_size);
+        if (read_file_to_buf(path[RT_COMM], buf, buf_size) == false) {
+            se_trace(SE_TRACE_ERROR, READ_FILE_ERROR, path[UNSIGNED]);
+            delete []buf;
+            goto clear_return;   
+        }
+        if (write_data_to_file(path[OUTPUT], std::ios::in | std::ios::binary | std::ios::out, reinterpret_cast<uint8_t*>(buf), buf_size, wasm_offset+WASM_PLD_SEC_SIZE) == false) {
+            se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
+            delete []buf;
+            goto clear_return;
+        }
+        delete []buf;
+    }
+
+    if(measure_enclave(enclave_hash, path[OUTPUT], parameter, option_flag_bits, metadata, &meta_offset, &meta_versions, wasm_rva, wasm_offset) == false)
     {
         se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
         goto clear_return;
     }
+
+    printf("signtool measurement\n");
+    for (int i = 0; i < SGX_HASH_SIZE; ++i)
+        printf("%02x ", enclave_hash[i]);
+    printf("\n");
     if((generate_output(mode, key_type, enclave_hash, pkey, metadata, path)) == false)
     {
         se_trace(SE_TRACE_ERROR, OVERALL_ERROR);
@@ -1446,7 +1638,7 @@ int main(int argc, char* argv[])
     }
 
     //to verify
-    if(mode == SIGN || mode == CATSIG)
+    if(mode == SIGN || mode == CATSIG || mode == SIGNWASM || mode == GEN_WASM_VM_MR)
     {
         if(verify_signature(pkey, &(metadata->enclave_css)) == false)
         {

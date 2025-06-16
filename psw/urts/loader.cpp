@@ -306,18 +306,70 @@ int CLoader::build_pages(const uint64_t start_rva, const uint64_t size, const vo
 
     assert(IS_PAGE_ALIGNED(start_rva) && IS_PAGE_ALIGNED(size));
 
+    uint64_t wasm_rva = 0, wasm_size = 0;
+    const Section* wasm_section = m_parser.get_wasm_section();
+
+    if (wasm_section != NULL)
+    {
+        wasm_rva = wasm_section->get_rva();
+        wasm_size = wasm_section->virtual_size();
+    }
+
     while(offset < size)
     {
         //call driver to add page;
-        if(SGX_SUCCESS != (ret = get_enclave_creator()->add_enclave_page(ENCLAVE_ID_IOCTL, GET_PTR(void, source, 0), rva, sinfo, attr)))
+        if (rva >= wasm_rva + wasm_size || rva + SE_PAGE_SIZE <= wasm_rva)
         {
-            //if add page failed , we should remove enclave somewhere;
-            return ret;
+            if(SGX_SUCCESS != (ret = get_enclave_creator()->add_enclave_page(ENCLAVE_ID_IOCTL, GET_PTR(void, source, 0), rva, sinfo, attr)))
+            {
+                //if add page failed , we should remove enclave somewhere;
+                return ret;
+            }
         }
         offset += SE_PAGE_SIZE;
         rva += SE_PAGE_SIZE;
     }
 
+    return SGX_SUCCESS;
+}
+
+
+#include <stdio.h>
+
+int CLoader::build_wasm_pages()
+{
+    int ret = SGX_SUCCESS;
+
+    const Section* wasm_section = m_parser.get_wasm_section_ex();
+    if (wasm_section == NULL) 
+        return ret;
+
+    uint64_t offset = 0;
+    uint64_t wasm_rva = wasm_section->get_rva();
+    uint64_t wasm_size = wasm_section->virtual_size();
+    const void *wasm_source = wasm_section->raw_data();
+
+    sec_info_t sinfo;
+    for (unsigned int i = 0; i < sizeof(sinfo.reserved) / sizeof(sinfo.reserved[0]); ++i)
+    {
+        sinfo.reserved[i] = 0;
+    }
+    sinfo.flags = 0x201;
+    uint32_t attr = 3;
+
+    assert(IS_PAGE_ALIGNED(wasm_rva) && IS_PAGE_ALIGNED(wasm_size));
+
+    while(offset < wasm_size)
+    {
+        //call driver to add page;
+        if(SGX_SUCCESS != (ret = get_enclave_creator()->add_enclave_page(ENCLAVE_ID_IOCTL, GET_PTR(void, wasm_source, offset), wasm_rva, sinfo, attr)))
+        {
+            //if add page failed , we should remove enclave somewhere;
+            return ret;
+        }
+        offset += SE_PAGE_SIZE;
+        wasm_rva += SE_PAGE_SIZE;
+    }
     return SGX_SUCCESS;
 }
 
@@ -619,6 +671,12 @@ int CLoader::build_image(SGXLaunchToken * const lc, sgx_attributes_t * const sec
         goto fail;
     }
 
+    // build wasm section
+    if(SGX_SUCCESS != (ret = build_wasm_pages()))
+    {
+        SE_TRACE(SE_TRACE_WARNING, "build wasm section failed\n");
+        goto fail;
+    }
     //initialize Enclave
     ret = get_enclave_creator()->init_enclave(ENCLAVE_ID_IOCTL, const_cast<enclave_css_t *>(&m_metadata->enclave_css), lc, prd_css_file);
     if(SGX_SUCCESS != ret)
